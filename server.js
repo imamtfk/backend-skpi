@@ -19,37 +19,37 @@ const corsOptions = {
   optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '50mb' })); // Support large base64 strings
+app.use(express.json({ limit: '50mb' })); 
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Routes
+app.get('/api/ping', (req, res) => res.json({ status: 'ok', message: 'Vercel is alive!' }));
+
 const skpiRoutes = require('./routes/skpiRoutes');
 const absensiRoutes = require('./routes/absensiRoutes');
 app.use('/api', skpiRoutes);
 app.use('/api', absensiRoutes);
 
-// Database Seeder
-const runSeeders = async () => {
-  try {
-    const seedCategories = require('./seeders/categorySeeder');
-    const seedUsers = require('./seeders/userSeeder');
-    const seedSubmissions = require('./seeders/submissionSeeder');
-    await seedCategories();
-    await seedUsers();
-    
-    const SkpiSubmission = require('./models/SkpiSubmission');
-    const submissionCount = await SkpiSubmission.count();
-    if (submissionCount === 0) await seedSubmissions();
-  } catch(e) {}
-};
-
-// Start Server Logic (Local vs Vercel)
+// Vercel Serverless Export
 if (process.env.VERCEL) {
-  // Vercel environment: just export app. Sequelize connects lazily.
-  sequelize.sync({ force: false }).then(() => runSeeders()).catch(console.error);
+  // VERCEL: Do not run background tasks (like sync) during cold start.
+  // It causes random FUNCTION_INVOCATION_FAILED errors due to race conditions.
   module.exports = app;
 } else {
-  // Local environment
+  // LOCAL ENVIRONMENT
+  const runSeeders = async () => {
+    try {
+      const seedCategories = require('./seeders/categorySeeder');
+      const seedUsers = require('./seeders/userSeeder');
+      const seedSubmissions = require('./seeders/submissionSeeder');
+      await seedCategories();
+      await seedUsers();
+      const SkpiSubmission = require('./models/SkpiSubmission');
+      const submissionCount = await SkpiSubmission.count();
+      if (submissionCount === 0) await seedSubmissions();
+    } catch(e) {}
+  };
+
   const startServer = async () => {
     await connectDB();
     try {
