@@ -1,82 +1,90 @@
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 
-// ============================================
-// CORS - Allow all origins (critical for Vercel)
-// ============================================
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  optionsSuccessStatus: 200
-}));
+// ============================================================
+// CORS — harus paling atas sebelum apapun
+// ============================================================
+app.use(cors({ origin: '*', methods: ['GET','POST','PUT','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'] }));
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// ============================================
-// Import models (register with Sequelize)
-// ============================================
-require('./models/User');
-require('./models/SkpiCategory');
-require('./models/SkpiSubmission');
-require('./models/Absensi');
+// ============================================================
+// Health check (tidak butuh database)
+// ============================================================
+app.get('/api/ping', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
+});
 
-// ============================================
-// Routes
-// ============================================
-app.get('/api/ping', (req, res) => res.json({ status: 'ok', message: 'Vercel backend is alive!' }));
+// ============================================================
+// Lazy-load database + routes agar tidak crash saat startup
+// ============================================================
+let routesLoaded = false;
 
-const skpiRoutes = require('./routes/skpiRoutes');
-const absensiRoutes = require('./routes/absensiRoutes');
-app.use('/api', skpiRoutes);
-app.use('/api', absensiRoutes);
+const loadRoutes = () => {
+  if (routesLoaded) return;
+  try {
+    require('dotenv').config();
 
-// ============================================
-// Vercel: export app directly (no server.listen)
-// Local: start server normally
-// ============================================
+    // Load models
+    require('./models/User');
+    require('./models/SkpiCategory');
+    require('./models/SkpiSubmission');
+    require('./models/Absensi');
+
+    // Load routes
+    const skpiRoutes = require('./routes/skpiRoutes');
+    const absensiRoutes = require('./routes/absensiRoutes');
+    app.use('/api', skpiRoutes);
+    app.use('/api', absensiRoutes);
+
+    routesLoaded = true;
+    console.log('Routes loaded successfully');
+  } catch (err) {
+    console.error('Failed to load routes:', err.message);
+  }
+};
+
+// Middleware untuk lazy-load routes sebelum setiap request
+app.use((req, res, next) => {
+  if (!routesLoaded) loadRoutes();
+  next();
+});
+
+// ============================================================
+// Jalankan server (lokal) atau export (Vercel)
+// ============================================================
 if (process.env.VERCEL) {
+  // Vercel: langsung export, tanpa listen
   module.exports = app;
 } else {
+  // Lokal: jalankan server normal
+  require('dotenv').config();
   const { sequelize, connectDB } = require('./config/database');
 
   const runSeeders = async () => {
     try {
-      const seedCategories = require('./seeders/categorySeeder');
-      const seedUsers = require('./seeders/userSeeder');
-      const seedSubmissions = require('./seeders/submissionSeeder');
-      await seedCategories();
-      await seedUsers();
+      await require('./seeders/categorySeeder')();
+      await require('./seeders/userSeeder')();
       const SkpiSubmission = require('./models/SkpiSubmission');
-      const count = await SkpiSubmission.count();
-      if (count === 0) await seedSubmissions();
+      if (await SkpiSubmission.count() === 0) await require('./seeders/submissionSeeder')();
     } catch (e) { console.error('Seeder error:', e.message); }
   };
 
-  const startServer = async () => {
+  (async () => {
     await connectDB();
-    try {
-      await sequelize.sync({ force: false });
-      console.log('Database synced.');
-      await runSeeders();
-    } catch (err) {
-      console.error('Sync error:', err.message);
-    }
-    const PORT = process.env.PORT || 5000;
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-  };
-
-  startServer();
+    await sequelize.sync({ force: false }).catch(console.error);
+    console.log('DB synced');
+    await runSeeders();
+    app.listen(process.env.PORT || 5000, () => console.log('Server running on port', process.env.PORT || 5000));
+  })();
 }
