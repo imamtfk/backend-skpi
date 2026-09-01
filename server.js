@@ -2,41 +2,56 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
-const { sequelize, connectDB } = require('./config/database');
 
-// Import models before routes so they register with Sequelize
+const app = express();
+
+// ============================================
+// CORS - Allow all origins (critical for Vercel)
+// ============================================
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200
+}));
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  next();
+});
+
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// ============================================
+// Import models (register with Sequelize)
+// ============================================
 require('./models/User');
 require('./models/SkpiCategory');
 require('./models/SkpiSubmission');
 require('./models/Absensi');
 
-const app = express();
-const PORT = process.env.PORT || 5000;
-
-// Middleware
-const corsOptions = {
-  origin: process.env.FRONTEND_URL || '*',
-  optionsSuccessStatus: 200
-};
-app.use(cors(corsOptions));
-app.use(express.json({ limit: '50mb' })); 
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
+// ============================================
 // Routes
-app.get('/api/ping', (req, res) => res.json({ status: 'ok', message: 'Vercel is alive!' }));
+// ============================================
+app.get('/api/ping', (req, res) => res.json({ status: 'ok', message: 'Vercel backend is alive!' }));
 
 const skpiRoutes = require('./routes/skpiRoutes');
 const absensiRoutes = require('./routes/absensiRoutes');
 app.use('/api', skpiRoutes);
 app.use('/api', absensiRoutes);
 
-// Vercel Serverless Export
+// ============================================
+// Vercel: export app directly (no server.listen)
+// Local: start server normally
+// ============================================
 if (process.env.VERCEL) {
-  // VERCEL: Do not run background tasks (like sync) during cold start.
-  // It causes random FUNCTION_INVOCATION_FAILED errors due to race conditions.
   module.exports = app;
 } else {
-  // LOCAL ENVIRONMENT
+  const { sequelize, connectDB } = require('./config/database');
+
   const runSeeders = async () => {
     try {
       const seedCategories = require('./seeders/categorySeeder');
@@ -45,23 +60,23 @@ if (process.env.VERCEL) {
       await seedCategories();
       await seedUsers();
       const SkpiSubmission = require('./models/SkpiSubmission');
-      const submissionCount = await SkpiSubmission.count();
-      if (submissionCount === 0) await seedSubmissions();
-    } catch(e) {}
+      const count = await SkpiSubmission.count();
+      if (count === 0) await seedSubmissions();
+    } catch (e) { console.error('Seeder error:', e.message); }
   };
 
   const startServer = async () => {
     await connectDB();
     try {
       await sequelize.sync({ force: false });
-      console.log('Database synced successfully.');
+      console.log('Database synced.');
       await runSeeders();
-    } catch (error) {
-      console.error('Error syncing database:', error);
+    } catch (err) {
+      console.error('Sync error:', err.message);
     }
-    app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
-    });
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   };
+
   startServer();
 }
