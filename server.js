@@ -26,45 +26,26 @@ app.get('/api/ping', (req, res) => {
 });
 
 // ============================================================
-// Lazy-load database + routes agar tidak crash saat startup
+// Load models (register Sequelize associations)
 // ============================================================
-let routesLoaded = false;
+require('./models/User');
+require('./models/SkpiCategory');
+require('./models/SkpiSubmission');
+require('./models/Absensi');
 
-const loadRoutes = () => {
-  if (routesLoaded) return;
-  try {
-    require('dotenv').config();
-
-    // Load models
-    require('./models/User');
-    require('./models/SkpiCategory');
-    require('./models/SkpiSubmission');
-    require('./models/Absensi');
-
-    // Load routes
-    const skpiRoutes = require('./routes/skpiRoutes');
-    const absensiRoutes = require('./routes/absensiRoutes');
-    app.use('/api', skpiRoutes);
-    app.use('/api', absensiRoutes);
-
-    routesLoaded = true;
-    console.log('Routes loaded successfully');
-  } catch (err) {
-    console.error('Failed to load routes:', err.message);
-  }
-};
-
-// Middleware untuk lazy-load routes sebelum setiap request
-app.use((req, res, next) => {
-  if (!routesLoaded) loadRoutes();
-  next();
-});
+// ============================================================
+// Load routes
+// ============================================================
+const skpiRoutes = require('./routes/skpiRoutes');
+const absensiRoutes = require('./routes/absensiRoutes');
+app.use('/api', skpiRoutes);
+app.use('/api', absensiRoutes);
 
 // ============================================================
 // Jalankan server (lokal) atau export (Vercel)
 // ============================================================
 if (process.env.VERCEL) {
-  // Vercel: langsung export, tanpa listen
+  // Vercel: langsung export tanpa listen
   module.exports = app;
 } else {
   // Lokal: jalankan server normal
@@ -85,6 +66,8 @@ if (process.env.VERCEL) {
     await sequelize.sync({ force: false }).catch(console.error);
     console.log('DB synced');
     await runSeeders();
-    app.listen(process.env.PORT || 5000, () => console.log('Server running on port', process.env.PORT || 5000));
+    app.listen(process.env.PORT || 5000, () =>
+      console.log('Server running on port', process.env.PORT || 5000)
+    );
   })();
 }
